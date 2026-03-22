@@ -74,27 +74,68 @@ def get_recommendations(score, analysis, hotspots_count):
     """Generates safety recommendations based on analysis patterns."""
     recommendations = []
     
+    # 1. Risk-Based Guidance
     if score <= 4:
-        recommendations.append("🚨 HIGH RISK ZONE: Avoid this area if possible or maintain extreme vigilance.")
+        recommendations.append("🚨 **CRITICAL RISK**: This area has a high frequency of serious accidents. Avoid through-traffic if possible.")
     elif score <= 7:
-        recommendations.append("⚠️ MODERATE RISK: Stay alert and follow all safety protocols.")
+        recommendations.append("⚠️ **MODERATE RISK**: Historical data shows frequent incidents. Stay focused and avoid distractions.")
     else:
-        recommendations.append("✅ RELATIVELY SAFE ZONE: Drive safely.")
+        recommendations.append("✅ **STABLE ZONE**: Lower accident density detected. Maintain standard safety protocols.")
         
-    if hotspots_count > 0:
-        recommendations.append(f"📍 CAUTION: {hotspots_count} accident hotspots detected near your path.")
-        
+    # 2. Environmental & Time Factors
     time_dist = analysis.get('time_dist', {})
     if time_dist.get('Night', 0) > time_dist.get('Morning', 0) * 1.5:
-        recommendations.append("🌙 Night driving is particularly dangerous here. Ensure headlights are functional.")
+        recommendations.append("🌙 **NIGHT HAZARD**: Significant accidents occur after dark. Ensure high-beam discipline and watch for unlit vehicles.")
         
     weather_dist = analysis.get('weather_dist', {})
     if weather_dist.get('Rainy', 0) > analysis.get('total_accidents', 0) / 4:
-        recommendations.append("🌧️ This area is prone to wet-weather accidents. Reduce speed during rain.")
-        
-    recommendations.append("📱 Keep your phone away while driving.")
-    
+        recommendations.append("🌧️ **WET TRACTION**: Historical data suggests high slip-risk during rain. Increase following distance by 2x.")
+
+    # 3. Structural Advice
+    if hotspots_count > 2:
+        recommendations.append(f"🛑 **CONGESTED HOTSPOTS**: {hotspots_count} accident clusters detected ahead. Sudden braking is common here.")
+
     return recommendations
+
+def get_recommended_speed(score, analysis):
+    """Calculates a dynamic recommended speed limit."""
+    base_speed = 60 # Standard urban/semi-urban limit
+    
+    # 1. Score-based reduction
+    if score < 4:
+        rec_speed = 30
+    elif score < 6:
+        rec_speed = 40
+    elif score < 8:
+        rec_speed = 50
+    else:
+        rec_speed = 60
+        
+    # 2. Factor in night-time risks from data
+    time_dist = analysis.get('time_dist', {})
+    if time_dist.get('Night', 0) > analysis.get('total_accidents', 0) / 2:
+        rec_speed -= 10 # Reduce speed if night accidents are dominant
+        
+    return max(rec_speed, 20) # Minimum 20 km/h for safety
+
+def get_route_guidance(hotspots):
+    """Provides route advice based on detected accident hotspots."""
+    if not hotspots:
+        return "✅ **ROUTE ADVICE**: No specific high-risk road clusters detected. Stick to main arterials and maintain standard safety."
+    
+    # Extract road names from hotspot addresses (simple heuristic: first part of address)
+    high_risk_locations = []
+    for hs in hotspots[:3]:
+        addr = hs.get('address', 'Unknown Road')
+        # Try to get a shorter road name/area
+        short_addr = addr.split(',')[0]
+        high_risk_locations.append(short_addr)
+    
+    if high_risk_locations:
+        locs_str = " and ".join(high_risk_locations)
+        return f"🗺️ **ROUTE ADVICE**: Data indicates higher accident density near **{locs_str}**. Exercise extra caution or use bypasses if your route passes through these areas."
+    
+    return "✅ **ROUTE ADVICE**: No specific high-risk road clusters detected on your current path."
 
 def get_risk_level(score):
     if score <= 4: return "High"

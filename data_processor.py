@@ -35,7 +35,11 @@ def fetch_realtime_incidents(lat, lon, api_key=None):
             data = response.json()
             return data.get('incidents', [])
         else:
-            print(f"Failed to fetch real-time incidents: {response.status_code}")
+            print(f"TomTom API Error: {response.status_code} - {response.text}")
+            # If it's a 403, it might be an invalid key or restricted access
+            if response.status_code in [401, 403]:
+                import streamlit as st
+                st.sidebar.error("❌ TomTom API Key is invalid or unauthorized for Traffic Services.")
             return []
     except Exception as e:
         print(f"Error fetching real-time incidents: {e}")

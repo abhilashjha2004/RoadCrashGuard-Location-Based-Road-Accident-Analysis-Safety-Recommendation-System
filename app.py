@@ -80,31 +80,82 @@ with st.sidebar:
     mode = st.radio("Detection Mode", ["📍 Current Location", "🔍 Search Location"])
     
     st.markdown("---")
-    api_key = st.text_input("TomTom API Key (Optional)", type="password")
+    api_key = st.text_input("TomTom API Key (Optional)", type="password", help="Needed ONLY for real-time traffic incidents. Historical analysis works without it.")
     
     if st.button("🚀 Run Analysis", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 
 # --- Core Logic ---
+PROG_VERSION = "v2.1-SafetyUpdate"
+
 lat, lon, address = None, None, None
 
+with st.sidebar:
+    st.markdown("---")
+    st.markdown(f"<p style='color: grey; font-size: 12px;'>Build: {PROG_VERSION}</p>", unsafe_allow_html=True)
+    status_placeholder = st.empty()
+
 if mode == "📍 Current Location":
-    with st.spinner("🛰️ Detecting location..."):
-        lat, lon, address = location_utils.get_current_location()
-        if not lat:
-            st.warning("⚠️ Could not detect IP location. Defaulting to Delhi.")
+    status_placeholder.info("🔍 Mode: Auto-Detecting IP Location...")
+    # 🛰️ 1. Initial Detection
+    default_config = location_utils.load_default_location()
+    
+    with st.sidebar:
+        st.markdown("### 🏠 Home Location Settings")
+        if default_config:
+            st.success(f"Default set: **{default_config['address']}**")
+            if st.button("🗑️ Clear Default"):
+                if os.path.exists(location_utils.CONFIG_FILE):
+                    os.remove(location_utils.CONFIG_FILE)
+                st.rerun()
+            
+            lat, lon, address = default_config['latitude'], default_config['longitude'], default_config['address']
+        else:
+            with st.spinner("🛰️ Detecting..."):
+                lat, lon, address = location_utils.get_current_location()
+            
+            # Special auto-fix for the Ludhiana/Phagwara issue
+            if address == "Ludhiana":
+                st.info("📍 Detected **Ludhiana**. Are you actually in **Phagwara**?")
+                if st.button("✅ Yes, use Phagwara"):
+                    p_lat, p_lon, p_addr = location_utils.get_coordinates("Phagwara")
+                    if p_lat is not None:
+                        location_utils.save_default_location(p_lat, p_lon, p_addr)
+                        st.rerun()
+
+            refinement = st.text_input("Refine Location (Optional)", 
+                                      help="IP-based detection can be imprecise. Enter your city here.")
+            if refinement:
+                status_placeholder.info(f"🛰️ Refining to: {refinement}")
+                ref_lat, ref_lon, ref_address = location_utils.get_coordinates(refinement)
+                if ref_lat is not None:
+                    lat, lon, address = ref_lat, ref_lon, ref_address
+                    if st.button("💾 Save as Default"):
+                        location_utils.save_default_location(lat, lon, address)
+                        st.success("Default saved!")
+                        st.rerun()
+                else:
+                    st.error(f"Could not find '{refinement}'")
+
+        if lat is None:
+            st.warning("⚠️ Location detection failed. Defaulting to Delhi.")
             lat, lon, address = 28.6139, 77.2090, "Delhi (Default)"
+
 else:
-    location_query = st.text_input("📍 Enter City or Highway (e.g. NH44, Bangalore)", placeholder="Search...")
+    # 🔍 Search Location Mode
+    status_placeholder.info("🔍 Mode: Manual Search...")
+    location_query = st.text_input("📍 Enter City or Highway (e.g. NH44, Bangalore)", placeholder="Type location and press Enter...")
     if location_query:
+        status_placeholder.info(f"🌍 Searching for: {location_query}")
         with st.spinner("🌍 Geocoding..."):
             lat, lon, address = location_utils.get_coordinates(location_query)
-            if not lat:
-                st.error("❌ Location not found. Please try another name.")
+            if lat is None:
+                st.error(f"❌ '{location_query}' not found. Try 'Delhi' or 'Mumbai'.")
 
-if lat and lon:
-    st.markdown(f"### 📍 Location: {address}")
+if lat is not None and lon is not None:
+    status_placeholder.success(f"📌 Analyzing: {address}")
+    st.markdown(f"<h2 style='text-align: center; color: #1a5276;'>📍 Analysis for: {address}</h2>", unsafe_allow_html=True)
     
     # 1. Fetch & Process Data
     with st.spinner("🔍 Analysing local data..."):
@@ -121,18 +172,24 @@ if lat and lon:
         score = safety_engine.calculate_safety_score(analysis, hotspots)
         risk = safety_engine.get_risk_level(score)
         recommendations = safety_engine.get_recommendations(score, analysis, len(hotspots))
+        
+        # New: Speed & Route guidance
+        recommended_speed = safety_engine.get_recommended_speed(score, analysis)
+        route_advice = safety_engine.get_route_guidance(hotspots)
 
-    # --- Top Row: Safety Score & Quick Stats ---
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
+    # --- Top Row: Safety Metrics ---
+    m_col1, m_col2, m_col3, m_col4, m_col5 = st.columns(5)
+    with m_col1:
         st.markdown(f"<div class='metric-card'><h3>Safety Score</h3><h1 style='color: #27ae60;'>{score}/10</h1></div>", unsafe_allow_html=True)
-    with col2:
+    with m_col2:
         risk_color = "#e74c3c" if risk == "High" else "#f39c12" if risk == "Medium" else "#27ae60"
         st.markdown(f"<div class='metric-card'><h3>Risk Level</h3><h1 style='color: {risk_color};'>{risk}</h1></div>", unsafe_allow_html=True)
-    with col3:
+    with m_col3:
         st.markdown(f"<div class='metric-card'><h3>Total Accidents</h3><h1>{analysis['total_accidents']}</h1></div>", unsafe_allow_html=True)
-    with col4:
+    with m_col4:
         st.markdown(f"<div class='metric-card'><h3>Hotspots</h3><h1>{len(hotspots)}</h1></div>", unsafe_allow_html=True)
+    with m_col5:
+        st.markdown(f"<div class='metric-card'><h3>Rec. Speed</h3><h1 style='color: #2980b9;'>{recommended_speed} <span style='font-size: 15px;'>km/h</span></h1></div>", unsafe_allow_html=True)
 
     st.markdown("---")
 
@@ -183,6 +240,24 @@ if lat and lon:
                 )
                 st.plotly_chart(fig_sev, use_container_width=True)
                 
+                # Risk Factor Contribution
+                risk_factors = {
+                    "Total Accidents": min(analysis['total_accidents'] * 0.2, 3.0),
+                    "Fatalities": analysis['severity_dist'].get('Fatal', 0) * 1.5,
+                    "High Severity": analysis['severity_dist'].get('High', 0) * 0.5,
+                    "Hotspots": len(hotspots) * 1.0
+                }
+                fig_risk = px.bar(
+                    x=list(risk_factors.values()),
+                    y=list(risk_factors.keys()),
+                    orientation='h',
+                    title="Safety Score Penalties (Risk Factors)",
+                    labels={'x': 'Deduction Points', 'y': 'Factor'},
+                    color=list(risk_factors.values()),
+                    color_continuous_scale='Reds'
+                )
+                st.plotly_chart(fig_risk, use_container_width=True)
+                
                 # Trend (Mock Trend based on index if no date, or just rows)
                 fig_trend = go.Figure()
                 fig_trend.add_trace(go.Scatter(y=np.cumsum(np.ones(len(nearby_df))), mode='lines', name='Cumulative', fill='tozeroy'))
@@ -192,9 +267,23 @@ if lat and lon:
             st.info("No data available for charts in this specific location.")
 
     with tab3:
-        st.subheader("Safety Recommendations")
-        for r in recommendations:
-            st.info(r)
+        st.subheader("💡 Proactive Safety Recommendations")
+        
+        # Route Advice highlighted
+        st.success(route_advice)
+        
+        st.markdown("---")
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("### 🚦 Driving Behavior")
+            for r in recommendations[:len(recommendations)//2 + 1]:
+                st.info(r)
+        with c2:
+            st.markdown("### 🛠️ Environmental Awareness")
+            for r in recommendations[len(recommendations)//2 + 1:]:
+                st.info(r)
+            st.info("📱 **MOBILE DISTRACTION**: Keep your phone away while driving.")
 
     # --- Hotspots Section ---
     if hotspots:
